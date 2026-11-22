@@ -1,0 +1,16 @@
+[package]
+name = "ge"
+version = "0.1.0"
+edition = "2024"
+
+[release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[build]
+rustflags = ["-A", "warnings"]
+
+[dependencies]
