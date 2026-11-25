@@ -69,9 +69,29 @@ pub enum AssignOp {
     Dec,
 }
 
+// match
+#[derive(Debug)]
+pub struct MatchArm {
+    pub pattern: MatchPattern,
+    pub body: MatchBody,
+}
+
+#[derive(Debug)]
+pub enum MatchPattern {
+    Literal(Expr),     // 42 =>
+    Default,           // _ =>
+    Binding(String),   // let y =>
+}
+
+#[derive(Debug)]
+pub enum MatchBody {
+    Expr(Expr),        // 42 => someExpr,
+    Block(Vec<Stmt>),  // 42 => { ... },
+}
+
 #[derive(Debug)]
 pub enum Expr {
-    IntNum(i64),
+    IntNum(i128),
     FloatNum(f64),
     Bool(bool),
     Str(String),
@@ -89,6 +109,10 @@ pub enum Expr {
         name: String,
         args: Vec<Expr>,
     },
+    Match {
+        value: Box<Expr>,
+        arms: Vec<MatchArm>,
+    }
 }
 
 #[derive(Debug)]
@@ -98,7 +122,7 @@ pub enum Stmt {
         is_ref: bool,
         typ: Type,
         name: String,
-        value: Expr,
+        value: Option<Expr>,
     },
     Assign {
         name: String,
@@ -121,11 +145,16 @@ pub enum Stmt {
     Loop {
         body: Vec<Stmt>,
     },
+    Break,
+    Continue,
     Expr(Expr),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Type {
+    Usize,
+    Isize,
+    
     I8,
     I16,
     I32,
@@ -134,11 +163,15 @@ pub enum Type {
     U8,
     U16,
     U32,
+    U64,
 
     F32,
     F64,
+    F128,
     
     Bool,
+    Byte,
+    Bits,
     
     Char,
     Str,
@@ -149,6 +182,8 @@ pub enum Type {
 
 #[derive(Debug)]
 pub struct Func {
+    pub is_pub: bool,
+    pub is_inline: bool,
     pub name: String,
     pub params: Vec<(Type, String)>,
     pub ret: Type,
@@ -211,11 +246,26 @@ impl<'a> Parser<'a> {
     fn parse_stmt(&mut self) -> ParseResult<Stmt> {
         match &self.current {
             Token::Let | Token::Mut | Token::Amp => self.parse_var_decl(),
-            Token::I8 | Token::I16 | Token::I32 | Token::I64 => self.parse_var_decl(),
-            Token::U8 | Token::U16 | Token::U32 => self.parse_var_decl(),
-            Token::Bool | Token::Char | Token::Str => self.parse_var_decl(),
 
+            Token::I8 | Token::I16 | Token::I32 | Token::I64 => self.parse_var_decl(),
+            Token::U8 | Token::U16 | Token::U32 | Token::U64 => self.parse_var_decl(),
+            Token::Bool | Token::Char | Token::Str => self.parse_var_decl(),
+            Token::Usize | Token::Isize => self.parse_var_decl(),
+            Token::F32 | Token::F64 | Token::F128 => self.parse_var_decl(),
+            Token::Byte | Token::Bits => self.parse_var_decl(),
+            
             Token::Return => self.parse_return(),
+            Token::Break => {
+                self.advance()?;
+                self.eat(&Token::Semicolon)?;
+                Ok(Stmt::Break)
+            }
+            Token::Continue => {
+                self.advance()?;
+                self.eat(&Token::Semicolon)?; 
+                Ok(Stmt::Continue)
+            }
+            
             Token::If => self.parse_if(),
             Token::While => self.parse_while(),
             Token::Loop => self.parse_loop(),
@@ -451,9 +501,25 @@ impl<'a> Parser<'a> {
             }
         };
 
-        self.eat(&Token::Eq)?;
-        let value = self.parse_expr()?;
-        self.eat(&Token::Semicolon)?;
+        let value = match &self.current {
+            Token::Semicolon => {
+                self.advance()?;
+                None
+            },
+            Token::Eq => {
+                self.advance()?;
+                let v = self.parse_expr()?;
+                self.eat(&Token::Semicolon)?;
+                Some(v)
+            },
+            t => {
+                return Err(ParseError::Unexpected {
+                    expected: "';' or '='".into(),
+                    got: t.clone(),
+                    pos: self.pos(),
+                })
+            },
+        };
 
         Ok(Stmt::VarDecl {
             is_mut,
@@ -522,12 +588,38 @@ impl<'a> Parser<'a> {
         Ok(Stmt::Return(value))
     }
 
+    fn parse_arrow_stmt(&mut self) -> ParseResult<Stmt> {
+        if self.current == Token::Return {
+            self.parse_return()
+        } else {
+            let expr = self.parse_expr()?;
+            match &self.current {
+                Token::Semicolon => {
+                    self.advance()?;
+                    Ok(Stmt::ImplicitReturn(expr))
+                }
+                Token::RBrace => Ok(Stmt::ImplicitReturn(expr)),
+                t => Err(ParseError::Unexpected {
+                    expected: "';' or '}'".into(),
+                    got: t.clone(),
+                    pos: self.pos(), 
+                }),
+            }
+        }
+    }
+
     fn parse_if(&mut self) -> ParseResult<Stmt> {
         self.eat(&Token::If)?;
         let cond = self.parse_expr()?;
-        let body = self.parse_block()?;
+        
+        let body = if self.current == Token::Arrow {
+            self.advance()?;
+            vec![self.parse_arrow_stmt()?]
+        } else {
+            self.parse_block()?
+        };
 
-        let mut elifs = Vec::new();
+        let mut elifs = Vec::with_capacity(8);
         let mut else_body = None;
 
         loop {
@@ -535,7 +627,12 @@ impl<'a> Parser<'a> {
                 Token::Elif => {
                     self.advance()?;
                     let cond = self.parse_expr()?;
-                    let body = self.parse_block()?;
+                    let body = if self.current == Token::Arrow {
+                        self.advance()?;
+                        vec![self.parse_arrow_stmt()?]
+                    } else {
+                        self.parse_block()?
+                    };
                     elifs.push((cond, body));
                 }
                 Token::Else => {
@@ -543,10 +640,20 @@ impl<'a> Parser<'a> {
                     if self.current == Token::If {
                         self.advance()?;
                         let cond = self.parse_expr()?;
-                        let body = self.parse_block()?;
+                        let body = if self.current == Token::Arrow {
+                            self.advance()?;
+                            vec![self.parse_arrow_stmt()?]
+                        } else {
+                            self.parse_block()?
+                        };
                         elifs.push((cond, body));
                     } else {
-                        else_body = Some(self.parse_block()?);
+                        else_body = if self.current == Token::Arrow {
+                            self.advance()?;
+                            Some(vec![self.parse_arrow_stmt()?])
+                        } else {
+                            Some(self.parse_block()?)
+                        };
                         break;
                     }
                 }
@@ -559,6 +666,63 @@ impl<'a> Parser<'a> {
             body,
             elif: elifs,
             els: else_body,
+        })
+    }
+
+    fn parse_match(&mut self) -> ParseResult<Expr> {
+        self.advance()?;
+
+        let value = self.parse_expr()?;
+        
+        self.eat(&Token::LBrace)?;
+
+        let mut arms = Vec::with_capacity(8);
+        loop {
+            if self.current == Token::RBrace {
+                break;
+            }
+
+            let pattern = match &self.current {
+                Token::Ident(s) if s == "_" => {
+                    self.advance()?;
+                    MatchPattern::Default
+                }
+                Token::Ident(_) => {
+                    match self.advance()? {
+                        Token::Ident(s) => MatchPattern::Binding(s),
+                        t => return Err(ParseError::UnexpectedToken(t, self.pos())),
+                    }
+                }
+                _ => {
+                    let expr = self.parse_expr()?;
+                    MatchPattern::Literal(expr)
+                }
+            };
+
+            self.eat(&Token::Arrow)?;
+
+            let body = if self.current == Token::LBrace {
+                let stmts = self.parse_block()?;
+                MatchBody::Block(stmts)
+            } else {
+                let expr = self.parse_expr()?;
+                MatchBody::Expr(expr)
+            };
+
+            if self.current == Token::Comma {
+                self.advance()?;
+            }
+
+            arms.push(MatchArm {
+                pattern,
+                body
+            })
+        }
+        self.eat(&Token::RBrace)?;
+
+        Ok(Expr::Match {
+            value: Box::new(value),
+            arms,
         })
     }
 
@@ -580,18 +744,50 @@ impl<'a> Parser<'a> {
     // main parsers
 
     fn parse_fn(&mut self) -> ParseResult<Func> {
+        let mut is_pub = false;
+        let mut is_inline = false;
+        
+        loop {
+            match &self.current {
+                Token::Pub => if is_pub {
+                    return Err(ParseError::Unexpected {
+                        expected: "keyword 'pub'".into(),
+                        got: Token::Pub,
+                        pos: self.pos(),
+                    });
+                } else {
+                    self.advance()?;
+                    is_pub = true;
+                }
+                Token::Inline => if is_inline {
+                    return Err(ParseError::Unexpected {
+                        expected: "keyword 'inline'".into(),
+                        got: Token::Inline,
+                        pos: self.pos(),
+                    });
+                } else {
+                    self.advance()?;
+                    is_inline = true;
+                }
+                Token::Fn => break,
+                t => return Err(ParseError::Unexpected {
+                    expected: "keyword 'fn'".into(),
+                    got: t.clone(),
+                    pos: self.pos(),
+                }),
+                
+            }
+        }
         self.eat(&Token::Fn)?;
-
+        
         // name
         let name = match self.advance()? {
             Token::Ident(s) => s,
-            t => {
-                return Err(ParseError::Unexpected {
-                    expected: "function name".into(),
-                    got: t,
-                    pos: self.pos(),
-                });
-            }
+            t => return Err(ParseError::Unexpected {
+                expected: "function name".into(),
+                got: t,
+                pos: self.pos(),
+            }),
         };
 
         // params
@@ -605,13 +801,11 @@ impl<'a> Parser<'a> {
             let typ = self.parse_type()?;
             let name = match self.advance()? {
                 Token::Ident(s) => s,
-                t => {
-                    return Err(ParseError::Unexpected {
-                        expected: "function name".into(),
-                        got: t,
-                        pos: self.pos(),
-                    });
-                }
+                t => return Err(ParseError::Unexpected {
+                    expected: "function name".into(),
+                    got: t,
+                    pos: self.pos(),
+                }),
             };
 
             params.push((typ, name));
@@ -642,9 +836,18 @@ impl<'a> Parser<'a> {
         };
 
         // body
-        let body = self.parse_block()?;
+        let body = if self.current == Token::Arrow {
+            self.advance()?;
+            let expr = self.parse_expr()?;
+            self.eat(&Token::Semicolon)?;
+            vec![Stmt::ImplicitReturn(expr)]
+        } else {
+            self.parse_block()?
+        };
 
         Ok(Func {
+            is_pub,
+            is_inline,
             name,
             params,
             ret,
@@ -790,6 +993,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_atom(&mut self) -> ParseResult<Expr> {
+        if matches!(self.current, Token::Match) {
+            return self.parse_match();
+        }
+
         match self.advance()? {
             Token::IntNum(v) => Ok(Expr::IntNum(v)),
             Token::FloatNum(v) => Ok(Expr::FloatNum(v)),

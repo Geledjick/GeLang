@@ -42,11 +42,11 @@ The language can already compute anything. It compiles to C.
 Short syntax and better control flow.
 
 - [ ] `for..in` and ranges (`0..10`)
-- [ ] `match` / `switch`
-- [ ] `emit` — return a value from a loop
+- [x] `match` / `switch`
+- [ ] `emit` — return a value from a loops/match/switch/if
 - [ ] Named loops (`break <name>` / `continue <name>`)
-- [ ] `inline fn` and `pub fn`
-- [ ] Arrow functions (`fn add(...) i32 => a + b;`)
+- [x] `inline fn` and `pub fn`
+- [x] Arrow functions (`fn add(...) i32 => a + b;`)
 
 ### ❌ Phase 3 — Safety
 
@@ -429,7 +429,14 @@ match x {
     42 => {},
     _  => {},        // _ is the default branch
     // instead of _, you can bind the value:
-    let y => {},     // y is an immutable reference
+    y => {},     // y is an immutable reference
+}
+```
+
+```GeLang
+match x * y {
+    10 => {},
+    z => {}, // z is a mutable variable, because x * y is expression
 }
 ```
 

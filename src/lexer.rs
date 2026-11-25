@@ -4,15 +4,17 @@ pub enum Token {
     Ident(String),
     StrData(String),
     FloatNum(f64),
-    IntNum(i64),
+    IntNum(i128),
     CharData(char),
     BoolData(bool),
     
     // Types
+    Usize, Isize,
     I8, I16, I32, I64,
-    U8, U16, U32,
-    F32, F64,
-    Bool,
+    U8, U16, U32, U64,
+    F32, F64, F128,
+    Byte,
+    Bool, Bits,
     Char, Str,
     
     // Operators
@@ -20,6 +22,7 @@ pub enum Token {
     PlusEq, MinusEq, MulEq, DivEq,
     PlusPlus, MinusMinus,
     Eq,
+    DotDot,
     Lt, Gt, LtEq, GtEq, EqEq, BangEq,
     Amp, AmpAmp, Pipe, PipePipe,
     Bang,
@@ -30,10 +33,23 @@ pub enum Token {
     Semicolon, Colon, Comma,
     
     // Keywords
-    Let, Mut, 
+    Let, Mut,
+
+    // functions
+    Pub, Inline, 
     Fn, Return, 
+
+    // conditions
     If, Else, Elif,
+    Match,
+    Emit,
+
+    // loops
     While, Loop,
+    For, In,
+    Break, Continue,
+
+    Arrow,
     
     // Meta
     Eof,
@@ -96,12 +112,36 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    fn skip_to_next(&mut self) -> LexResult {
+        loop {
+            match self.peek() {
+                None => return Err(LexError {
+                    msg: "Unterminated block comment".into(),
+                    line: self.line,
+                    col: self.col,
+                }),
+                Some('*') => {
+                    self.advance();
+                    if self.peek() == Some('/') {
+                        self.advance();
+                        break;
+                    }
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+
+        self.next_token()
+    }
+
     fn read_number(&mut self, first: char) -> LexResult {
         let start = self.pos - first.len_utf8();
         let mut has_dot = false;
 
         while let Some(c) = self.peek() {
-            if c.is_ascii_digit() {
+            if c.is_ascii_digit() || c == '_' {
                 self.advance();
             } else if c == '.' && !has_dot {
                 has_dot = true;
@@ -117,7 +157,7 @@ impl<'a> Lexer<'a> {
                 .map(Token::FloatNum)
                 .map_err(|_| LexError { msg: format!("Invalid float number: {s}"), line: self.line, col: self.col })
         } else {
-            s.parse::<i64>()
+            s.parse::<i128>()
                 .map(Token::IntNum)
                 .map_err(|_| LexError { msg: format!("Invalid int number: {s}"), line: self.line, col: self.col })
         }
@@ -147,6 +187,23 @@ impl<'a> Lexer<'a> {
             "true" => Token::BoolData(true),
             "false" => Token::BoolData(false),
 
+            "usize" => Token::Usize,
+            "isize" => Token::Isize,
+            "u64" => Token::U64,
+            "f128" => Token::F128,
+            "byte" => Token::Byte,
+            "bits" => Token::Bits,
+            
+            "pub" => Token::Pub,
+            "inline" => Token::Inline,
+            "for" => Token::For,
+            "in" => Token::In,
+            "break" => Token::Break,
+            "continue" => Token::Continue,
+            "match" => Token::Match,
+            "switch" => Token::Match,
+            "emit" => Token::Emit,
+            
             "i8" => Token::I8,
             "i16" => Token::I16,
             "i32" => Token::I32,
@@ -237,6 +294,10 @@ impl<'a> Lexer<'a> {
                     self.skip_to_new_line();
                     self.next_token()
                 },
+                Some('*') => {
+                    self.advance();
+                    self.skip_to_next()
+                }
                 _ => Ok(Token::Div)
             },
             '<' => match self.peek() {
@@ -267,6 +328,17 @@ impl<'a> Lexer<'a> {
                 }
                 _ => Ok(Token::Pipe)
             },
+            '.' => match self.peek() {
+                Some('.') => {
+                    self.advance();
+                    Ok(Token::DotDot)
+                }
+                _ => Err(LexError {
+                    msg: "Unexpected char: '.'".into(),
+                    line: self.line,
+                    col: self.col
+                })
+            }
             
             '(' => Ok(Token::LParen),
             ')' => Ok(Token::RParen),
@@ -279,7 +351,11 @@ impl<'a> Lexer<'a> {
                 Some('=') => {
                     self.advance();
                     Ok(Token::EqEq)
-                }
+                },
+                Some('>') => {
+                    self.advance();
+                    Ok(Token::Arrow)
+                },
                 _ => Ok(Token::Eq)
             },
             '!' => match self.peek() {
@@ -295,14 +371,21 @@ impl<'a> Lexer<'a> {
                 if let Some(c) = self.advance() {
                     Ok(Token::CharData(c))
                 } else {
-                    Err(LexError { msg: format!("The parentheses \'\' are not closed: {:?}", c), line: self.line, col: self.col })
+                    Err(LexError {
+                        msg: format!("The parentheses \'\' are not closed: {:?}", c),
+                        line: self.line,
+                        col: self.col })
                 }
             }
 
             c if c.is_ascii_digit() => self.read_number(c),
             c if c.is_alphabetic() || c == '_' => Ok(self.read_ident(c)),
 
-            c => Err(LexError { msg: format!("Unexpected char: {:?}", c), line: self.line, col: self.col }),
+            c => Err(LexError {
+                msg: format!("Unexpected char: {:?}", c),
+                line: self.line,
+                col: self.col
+            }),
         }
     }
 }
