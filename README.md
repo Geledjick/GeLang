@@ -25,7 +25,7 @@ GeLang is built in four phases. Each phase makes the language more complete.
 | Phase | Goal | Status |
 |---|---|---|
 | **1** | Core — Turing-complete | ✅ Done |
-| **2** | Ergonomics | ❌ Not started |
+| **2** | Ergonomics | ❌ Started |
 | **3** | Safety | ❌ Not started |
 | **4** | Types | ❌ Not started |
 
