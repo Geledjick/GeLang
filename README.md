@@ -66,8 +66,13 @@ User-defined types and containers.
 - [ ] `arr<T>`, `vec<T>`, `heap<T>`
 - [ ] `char8/16/32`, `str8/16/32`
 
+### ❌ Phase 5 — Self-dependence
+
+- [ ] **Emitter** — GeLang → intermediate three-address code → machine code
+- [ ] Rewrite the entire compiler in GeLang
+
 > 📌 **Note:** The sections below describe the full language design.
-> Features from Phases 2–4 are part of the spec, but the compiler does not support them yet.
+> Features from Phases 2–5 are part of the spec, but the compiler does not support them yet.
 
 ---
 

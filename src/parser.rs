@@ -560,9 +560,12 @@ impl<'a> Parser<'a> {
                             stmts.push(Stmt::ImplicitReturn(expr));
                             break;
                         }
+                        _ if matches!(&expr, Expr::Match { .. }) => {
+                            stmts.push(Stmt::Expr(expr));
+                        }
                         t => {
                             return Err(ParseError::Unexpected {
-                                expected: "\';\' or \'}\'".into(),
+                                expected: "';' or '}'".into(),
                                 got: t.clone(),
                                 pos: self.pos(),
                             });
@@ -709,9 +712,7 @@ impl<'a> Parser<'a> {
                 MatchBody::Expr(expr)
             };
 
-            if self.current == Token::Comma {
-                self.advance()?;
-            }
+            self.eat(&Token::Comma)?;
 
             arms.push(MatchArm {
                 pattern,
